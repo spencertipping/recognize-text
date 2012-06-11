@@ -13,7 +13,7 @@ Text is identified in mostly-gapless lines. A gap wider than the line height is 
       recognize_text(image_data, options) = result
 
       -where [default_options() = {radius: 16, depth: 4},
-              settings          = default_options() -se [options %k*![it[x] = options[x]] -seq],
+              settings          = default_options() -se [options %k*![it[x] = options[x]] -seq -when.options],
 
               w = image_data.width,  h = image_data.height,
 

@@ -336,7 +336,7 @@ return $(function(_) {return($( 'body' ) ) .append(workspace() ) } ) } ) .call(t
           }
         },
         settings = (function(it) {
-          return (function(xs) {
+          return options && (function(xs) {
             var x, x0, xi, xl, xr;
             for (var x in xs) if (Object.prototype.hasOwnProperty.call(xs, x)) it[x] = options[x];
             return xs
