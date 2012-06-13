@@ -3,7 +3,7 @@
     return (function() {
       var default_options = function() {;
           return {
-            radius: 4
+            radius: 16
           }
         },
         settings = (function(it) {
@@ -159,20 +159,20 @@
               y: y,
               w: 1,
               h: 1,
-              confidence: likelihood(window(x - 4, y, 3, settings.radius), window(x - 2, y, 3, settings.radius), window(x, y, 3, settings.radius))
+              confidence: likelihood(window(x - 5, y, 5, 5), window(x, y, 5, 5), window(x + 5, y, 5, 5))
             }));
             return yr
           }).call(this, (function(i, u, s) {
             if ((u - i) * s <= 0) return [];
             for (var r = [], d = u - i; d > 0 ? i < u : i > u; i += s) r.push(i);
             return r
-          })((0), (h - settings.radius), (1))))));
+          })((10), (h - settings.radius), (2))))));
           return xr
         }).call(this, (function(i, u, s) {
           if ((u - i) * s <= 0) return [];
           for (var r = [], d = u - i; d > 0 ? i < u : i > u; i += s) r.push(i);
           return r
-        })((4), (w), (1))));
+        })((15), (w - settings.radius), (2))));
       return result
     }).call(this)
   }

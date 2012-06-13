@@ -12,7 +12,7 @@ Text is identified in mostly-gapless lines. A gap wider than the line height is 
     caterwaul.offline('js_all', function () {
       recognize_text(image_data, options) = result
 
-      -where [default_options() = {radius: 4},
+      -where [default_options() = {radius: 16},
               settings          = default_options() -se [options %k*![it[x] = options[x]] -seq -when.options],
 
               w = image_data.width,
@@ -101,7 +101,7 @@ nonrepetitive from one pixel to another, but often preserves the absolute bright
               clip_confidences(xs)   = xs *![x.confidence = Math.max(x.confidence, 1) /!Math.log] -seq -then-
                                        xs *![x.confidence /= maximum] /seq /where [maximum = xs /[0][x0 /-Math.max/ x.confidence] -seq],
               // Test result:
-              result                 = clip_confidences(n[4, w] *~![n[0, h - settings.radius]
-                                                        *y[{x: x, y: y, w: 1, h: 1, confidence: likelihood(window(x - 4, y, 3, settings.radius),
-                                                                                                           window(x - 2, y, 3, settings.radius),
-                                                                                                           window(x,     y, 3, settings.radius))}] -seq] -seq)]});
+              result                 = clip_confidences(n[15, w - settings.radius, 2] *~![n[10, h - settings.radius, 2]
+                                                        *y[{x: x, y: y, w: 1, h: 1, confidence: likelihood(window(x - 5, y, 5, 5),
+                                                                                                           window(x,     y, 5, 5),
+                                                                                                           window(x + 5, y, 5, 5))}] -seq] -seq)]});
