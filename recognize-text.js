@@ -3,7 +3,7 @@
     return (function() {
       var default_options = function() {;
           return {
-            radius: 16
+            radius: 4
           }
         },
         settings = (function(it) {
@@ -16,7 +16,7 @@
         w = image_data.width,
         h = image_data.height,
         pixel_offset = function(x, y) {;
-          return y * h + x << 2
+          return y * w + x << 2
         },
         pixel_vector = function(x, y) {;
           return (function() {
@@ -64,24 +64,26 @@
         dot = function(v1, v2) {;
           return (function(xs) {
             var x, x0, xi, xl, xr;
-            for (var x0 = (0), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], x0 = (x * v2[xi]);
+            for (var x0 = (0), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], x0 = (x0 + x * v2[xi]);
             return x0
           }).call(this, v1)
         },
-        likelihood = function(w1, w2) {;
+        likelihood = function(w1, w2, w3) {;
           return (function() {
-            var top_term = squared(luminosity(d.d_variance)) + dot(vector_mean(w1.deltas), vector_mean(w2.deltas)),
-              bottom_term = squared(luminosity(d.d_average)) + 1;
-            return top_term / bottom_term
+            var d1 = d_window(w2, w1),
+              d2 = d_window(w3, w2),
+              variance_numerator = Math.abs(dot(d1.d_variance, d2.d_variance)),
+              variance_denominator = 1 + Math.abs(luminosity(d1.d_variance) * luminosity(d2.d_variance)),
+              variance_fraction = variance_numerator / variance_denominator,
+              average_numerator = Math.abs(luminosity(d1.d_average) - luminosity(d2.d_average)),
+              average_denominator = 1 + squared(dot(d1.d_average, d2.d_average)),
+              average_fraction = average_numerator / average_denominator;
+            return variance_fraction * average_fraction
           }).call(this)
         },
         window = function(x, y, w, h) {;
           return (function() {
-            var x = x,
-              y = y,
-              w = w,
-              h = h,
-              pixels = pixels_in(x, y, w, h),
+            var pixels = pixels_in(x, y, w, h),
               average = (function(it) {
                 return times(it, (1 / pixels.length))
               }).call(this, ((function(xs) {
@@ -95,10 +97,6 @@
                 return x0
               }).call(this, pixels), c_times(average, average));
             return {
-              x: x,
-              y: y,
-              w: w,
-              h: h,
               pixels: pixels,
               average: average,
               variance: variance
@@ -107,15 +105,9 @@
         },
         d_window = function(w1, w2) {;
           return (function() {
-            var deltas = (function(xs) {
-              var x, x0, xi, xl, xr;
-              for (var xr = new xs.constructor(), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], xr.push((minus(x, w2.pixels[xi])));
-              return xr
-            }).call(this, w1.pixels),
-              d_average = minus(w1.average, w2.average),
+            var d_average = minus(w1.average, w2.average),
               d_variance = minus(w1.variance, w2.variance);
             return {
-              deltas: deltas,
               d_average: d_average,
               d_variance: d_variance
             }
@@ -140,16 +132,25 @@
             return r
           })((x), (x + w), (1)))
         },
-        vector_mean = function(xs) {;
-          return (function(it) {
-            return times(it, (1 / xs.length))
-          }).call(this, ((function(xs) {
+        clip_confidences = function(xs) {;
+          return ((function(xs) {
             var x, x0, xi, xl, xr;
-            for (var x0 = (zero), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], x0 = (plus(x0, x));
-            return x0
-          }).call(this, xs)))
+            for (var xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], (x.confidence = Math.log(Math.max(x.confidence, 1)));
+            return xs
+          }).call(this, xs), (function() {
+            var maximum = (function(xs) {
+              var x, x0, xi, xl, xr;
+              for (var x0 = (0), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], x0 = (Math.max(x0, x.confidence));
+              return x0
+            }).call(this, xs);
+            return (function(xs) {
+              var x, x0, xi, xl, xr;
+              for (var xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], (x.confidence /= maximum);
+              return xs
+            }).call(this, xs)
+          }).call(this))
         },
-        result = (function(xs) {
+        result = clip_confidences((function(xs) {
           var x, x0, xi, xl, xr;
           for (var xr = new xs.constructor(), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], xr.push.apply(xr, Array.prototype.slice.call(((function(ys) {
             var y, y0, yi, yl, yr;
@@ -158,7 +159,7 @@
               y: y,
               w: 1,
               h: 1,
-              confidence: likelihood(window(x - 1, y, 1, settings.radius), window(x, y, 1, settings.radius))
+              confidence: likelihood(window(x - 4, y, 3, settings.radius), window(x - 2, y, 3, settings.radius), window(x, y, 3, settings.radius))
             }));
             return yr
           }).call(this, (function(i, u, s) {
@@ -171,7 +172,7 @@
           if ((u - i) * s <= 0) return [];
           for (var r = [], d = u - i; d > 0 ? i < u : i > u; i += s) r.push(i);
           return r
-        })((1), (w), (1)));
+        })((4), (w), (1))));
       return result
     }).call(this)
   }

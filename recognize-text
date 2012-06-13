@@ -1816,12 +1816,13 @@ Text is identified in mostly-gapless lines. A gap wider than the line height is 
 caterwaul.offline('js_all', function () {
   recognize_text(image_data, options) = result
 
-  -where [default_options() = {radius: 16},
+  -where [default_options() = {radius: 4},
           settings          = default_options() -se [options %k*![it[x] = options[x]] -seq -when.options],
 
-          w = image_data.width,  h = image_data.height,
+          w = image_data.width,
+          h = image_data.height,
 
-          pixel_offset(x, y) = y * h + x << 2,
+          pixel_offset(x, y) = y * w + x << 2,
           pixel_vector(x, y) = [d[o], d[o + 1], d[o + 2]] -where [d = image_data.data, o = pixel_offset(x, y)],
 
           luminosity_vector  = [0.2126, 0.7152, 0.0722],
@@ -1830,11 +1831,11 @@ caterwaul.offline('js_all', function () {
           squared(x)         = x * x,
 
           zero               = [0, 0, 0],
-          plus(v1, v2)       = v1    *[x + v2[xi]] -seq,
-          minus(v1, v2)      = v1    *[x - v2[xi]] -seq,
-          times(v, f)        = v     *[x * f]      -seq,
-          c_times(v1, v2)    = v1    *[x * v2[xi]] -seq,
-          dot(v1, v2)        = v1 /[0][x * v2[xi]] -seq,
+          plus(v1, v2)       = v1         *[x + v2[xi]] -seq,
+          minus(v1, v2)      = v1         *[x - v2[xi]] -seq,
+          times(v, f)        = v          *[x * f]      -seq,
+          c_times(v1, v2)    = v1         *[x * v2[xi]] -seq,
+          dot(v1, v2)        = v1 /[0][x0 + x * v2[xi]] -seq,
 
 Recognition algorithm.
 The idea here is to use a few heuristics to pick out likely candidates for text. Text has the following characteristics:
@@ -1862,41 +1863,51 @@ to identify text regions.
                            x91 x92 x93 x94 x95 x96 ...
                            ...
 
-The window provides several different kinds of values:
+Windows provide two color-vector aggregates:
 
-| 1. Cross-pixel covariance of deltas.
-  2. Average value of all pixels within the window.
-  3. Variance of all pixels within the window.
+| 1. Average value of all pixels within the window.
+  2. Variance of all pixels within the window.
 
 All of these vectors are specified as color vectors that will later be unified under a luminosity function. We need to preserve color components to detect uniformity of color as well as of
-luminosity. In particular, text has the property that the deltas are unlikely to be highly covariant, but most of the covariance should be in the same color direction. (This property can be
-verified using the dot product.) The text likelihood is computed by this formula:
+luminosity. Given three adjacent windows w1, w2, and w3, this is the likelihood that the region is made up of text:
 
-|        L(dV)^2 + σ(d[0]) · σ(d[1])          A      = average of pixels within window (color vector)
-  text = ---------------------------          V      = variance of pixels within window (color vector)
-                L(dA)^2 + 1                   L(x)   = luminosity of color vector x (scalar)
-                                              dA     = delta of average of pixels within window (color vector)
-                                              dV     = delta of variance of pixels within window (color vector)
-                                              σ(v)   = average of values in array v
-                                              d[n]   = nth-most-recent per-pixel delta array (each element is a color delta)
+|          |dv1 · dv2|        |L(da1) - L(da2)|     dv1 = variance(window 2) - variance(window 1)   [vector]
+  l = --------------------- * -----------------     dv2 = variance(window 3) - variance(window 2)   [vector]
+      1 + |L(dv1) * L(dv2)|   1 + (da1 · da2)^2     da1 = average(window 2)  - average(window 1)    [vector]
+                                                    da2 = average(window 3)  - average(window 2)    [vector]
+                                                    L(v) = luminosity of vector                     [scalar]
 
-          likelihood(w1, w2)    = top_term / bottom_term -where [top_term    = luminosity(d.d_variance) /!squared + vector_mean(w1.deltas) /-dot/ vector_mean(w2.deltas),
-                                                                 bottom_term = luminosity(d.d_average)  /!squared + 1],
+The first fraction is variance-bound and the second is average-bound. We're looking for places where the average color luminosity does not change much, but the variance does. Text is highly
+nonrepetitive from one pixel to another, but often preserves the absolute brightness.
 
-          window(x, y, w, h)    = wcapture [x = x, y = y, w = w, h = h, pixels   = pixels_in(x, y, w, h),
-                                                                        average  = pixels /[zero][x0 /-plus/ x] -seq -re- it /-times/ (1 / pixels.length),
-                                                                        variance = pixels /[zero][x0 |-plus| x /-c_times/ x] -seq |-minus| average /-c_times/ average],
+          likelihood(w1, w2, w3) = variance_fraction * average_fraction
+                                   -where [d1                   = w2 /-d_window/ w1,
+                                           d2                   = w3 /-d_window/ w2,
 
-          d_window(w1, w2)      = wcapture [deltas     = w1.pixels *[x /-minus/ w2.pixels[xi]] -seq,
-                                            d_average  = w1.average  /-minus/ w2.average,
-                                            d_variance = w1.variance /-minus/ w2.variance],
+                                           variance_numerator   = d1.d_variance /-dot/ d2.d_variance /!Math.abs,
+                                           variance_denominator = 1 + luminosity(d1.d_variance) * luminosity(d2.d_variance) /!Math.abs,
+                                           variance_fraction    = variance_numerator / variance_denominator,
 
-          pixels_in(x, y, w, h) = n[x, x + w] *~![n[y, y + h] *y[pixel_vector(x, y)] -seq] -seq,
-          vector_mean(xs)       = xs /[zero][x0 /-plus/ x] -seq -re- it /-times/ (1 / xs.length),
+                                           average_numerator    = Math.abs(luminosity(d1.d_average) - luminosity(d2.d_average)),
+                                           average_denominator  = 1 + d1.d_average /-dot/ d2.d_average /!squared,
+                                           average_fraction     = average_numerator / average_denominator],
 
+          // Easy optimization: memoize this function
+          window(x, y, w, h)     = wcapture [pixels   = pixels_in(x, y, w, h),
+                                             average  = pixels /[zero][x0 /-plus/ x] -seq -re- it /-times/ (1 / pixels.length),
+                                             variance = pixels /[zero][x0 |-plus| x /-c_times/ x] -seq |-minus| average /-c_times/ average],
+
+          d_window(w1, w2)       = wcapture [d_average  = w1.average  /-minus/ w2.average,
+                                             d_variance = w1.variance /-minus/ w2.variance],
+
+          pixels_in(x, y, w, h)  = n[x, x + w] *~![n[y, y + h] *y[pixel_vector(x, y)] -seq] -seq,
+          clip_confidences(xs)   = xs *![x.confidence = Math.max(x.confidence, 1) /!Math.log] -seq -then-
+                                   xs *![x.confidence /= maximum] /seq /where [maximum = xs /[0][x0 /-Math.max/ x.confidence] -seq],
           // Test result:
-          result                = n[1, w] *~![n[0, h - settings.radius] *y[{x: x, y: y, w: 1, h: 1, confidence: likelihood(window(x - 1, y, 1, settings.radius),
-                                                                                                                           window(x,     y, 1, settings.radius))}] -seq] -seq]});
+          result                 = clip_confidences(n[4, w] *~![n[0, h - settings.radius]
+                                                    *y[{x: x, y: y, w: 1, h: 1, confidence: likelihood(window(x - 4, y, 3, settings.radius),
+                                                                                                       window(x - 2, y, 3, settings.radius),
+                                                                                                       window(x,     y, 3, settings.radius))}] -seq] -seq)]});
 
 __
 meta::sdoc('waul::test-bench', <<'__');
@@ -1918,7 +1929,7 @@ caterwaul.module('test-bench', ':all', function (c) {
          add_files_to_workspace(e) = e.originalEvent.dataTransfer.files *!add_one -seq,
 
          locate_text()             = $('.workspace')[0].getContext('2d').getImageData(0, 0, $('.workspace').width(), $('.workspace').height()) /!recognize_text /!draw_indicators,
-         draw_indicators(results)  = results *![c.fillStyle = 'rgba(0,255,0,#{x.confidence})', c.fillRect(x.x, x.y, 1, 1)] -seq
+         draw_indicators(results)  = results *![c.fillStyle = 'rgba(128,0,255,#{x.confidence})', c.fillRect(x.x, x.y, 1, 1)] -seq
                                      -where [c = $('.workspace')[0].getContext('2d')],
 
          add_one(file)             = $('body') /~append/ jquery [img.element *src(data) /!load(revoke_img_url) /!load(draw_and_locate)]
