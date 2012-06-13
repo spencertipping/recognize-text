@@ -11,7 +11,7 @@ Text is identified in mostly-gapless lines. A gap wider than the line height is 
 caterwaul.offline('js_all', function () {
   recognize_text(image_data, options) = result
 
-  -where [default_options() = {radius: 16, depth: 4},
+  -where [default_options() = {radius: 16},
           settings          = default_options() -se [options %k*![it[x] = options[x]] -seq -when.options],
 
           w = image_data.width,  h = image_data.height,
@@ -22,10 +22,14 @@ caterwaul.offline('js_all', function () {
           luminosity_vector  = [0.2126, 0.7152, 0.0722],
           luminosity(v)      = v /-dot/ luminosity_vector,
 
+          squared(x)         = x * x,
+
+          zero               = [0, 0, 0],
           plus(v1, v2)       = v1    *[x + v2[xi]] -seq,
+          minus(v1, v2)      = v1    *[x - v2[xi]] -seq,
           times(v, f)        = v     *[x * f]      -seq,
           c_times(v1, v2)    = v1    *[x * v2[xi]] -seq,
-          dot(v1, v2)        = v1 /[0][x * v2[xi]] -seq]});
+          dot(v1, v2)        = v1 /[0][x * v2[xi]] -seq,
 
 Recognition algorithm.
 The idea here is to use a few heuristics to pick out likely candidates for text. Text has the following characteristics:
@@ -55,18 +59,36 @@ to identify text regions.
 
 The window provides several different kinds of values:
 
-| 1. Delta history for each pixel (history size is variable using the 'depth' option, which defaults to 4).
-  2. Cross-pixel covariance of deltas.
-  3. Average value of all pixels within the window.
-  4. Variance of all pixels within the window.
+| 1. Cross-pixel covariance of deltas.
+  2. Average value of all pixels within the window.
+  3. Variance of all pixels within the window.
 
 All of these vectors are specified as color vectors that will later be unified under a luminosity function. We need to preserve color components to detect uniformity of color as well as of
 luminosity. In particular, text has the property that the deltas are unlikely to be highly covariant, but most of the covariance should be in the same color direction. (This property can be
 verified using the dot product.) The text likelihood is computed by this formula:
 
-|        L(V) + σ(d[0]) · σ(d[1])           V      = variance of pixels within window (color vector)
-  text = ------------------------           A      = average of pixels within window (color vector)
-          L(A) + cov[0] · cov[1]            L(x)   = luminosity of color vector x
-                                            σ(v)   = average of values in array v
-                                            d[n]   = nth-most-recent per-pixel delta array (each element is a color delta)
-                                            cov[n] = nth-most-recent cross-pixel covariance factor, as a color vector
+|        L(dV)^2 + σ(d[0]) · σ(d[1])          A      = average of pixels within window (color vector)
+  text = ---------------------------          V      = variance of pixels within window (color vector)
+                L(dA)^2 + 1                   L(x)   = luminosity of color vector x (scalar)
+                                              dA     = delta of average of pixels within window (color vector)
+                                              dV     = delta of variance of pixels within window (color vector)
+                                              σ(v)   = average of values in array v
+                                              d[n]   = nth-most-recent per-pixel delta array (each element is a color delta)
+
+          likelihood(w1, w2)    = top_term / bottom_term -where [top_term    = luminosity(d.d_variance) /!squared + vector_mean(w1.deltas) /-dot/ vector_mean(w2.deltas),
+                                                                 bottom_term = luminosity(d.d_average)  /!squared + 1],
+
+          window(x, y, w, h)    = wcapture [x = x, y = y, w = w, h = h, pixels   = pixels_in(x, y, w, h),
+                                                                        average  = pixels /[zero][x0 /-plus/ x] -seq -re- it /-times/ (1 / pixels.length),
+                                                                        variance = pixels /[zero][x0 |-plus| x /-c_times/ x] -seq |-minus| average /-c_times/ average],
+
+          d_window(w1, w2)      = wcapture [deltas     = w1.pixels *[x /-minus/ w2.pixels[xi]] -seq,
+                                            d_average  = w1.average  /-minus/ w2.average,
+                                            d_variance = w1.variance /-minus/ w2.variance],
+
+          pixels_in(x, y, w, h) = n[x, x + w] *~![n[y, y + h] *y[pixel_vector(x, y)] -seq] -seq,
+          vector_mean(xs)       = xs /[zero][x0 /-plus/ x] -seq -re- it /-times/ (1 / xs.length),
+
+          // Test result:
+          result                = n[1, w] *~![n[0, h - settings.radius] *y[{x: x, y: y, w: 1, h: 1, confidence: likelihood(window(x - 1, y, 1, settings.radius),
+                                                                                                                           window(x,     y, 1, settings.radius))}] -seq] -seq]});
