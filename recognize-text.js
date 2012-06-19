@@ -1,179 +1,139 @@
-(function() {
-  recognize_text = function(image_data, options) {;
-    return (function() {
-      var default_options = function() {;
-          return {
-            radius: 16
-          }
-        },
-        settings = (function(it) {
-          return options && (function(xs) {
-            var x, x0, xi, xl, xr;
-            for (var x in xs) if (Object.prototype.hasOwnProperty.call(xs, x)) it[x] = options[x];
-            return xs
-          }).call(this, options), it
-        }).call(this, (default_options())),
-        w = image_data.width,
-        h = image_data.height,
-        pixel_offset = function(x, y) {;
-          return y * w + x << 2
-        },
-        pixel_vector = function(x, y) {;
-          return (function() {
-            var d = image_data.data,
-              o = pixel_offset(x, y);
-            return [d[o], d[o + 1], d[o + 2]]
-          }).call(this)
-        },
-        luminosity_vector = [0.2126, 0.7152, 0.0722],
-        luminosity = function(v) {;
-          return dot(v, luminosity_vector)
-        },
-        squared = function(x) {;
-          return x * x
-        },
-        zero = [0, 0, 0],
-        plus = function(v1, v2) {;
-          return (function(xs) {
-            var x, x0, xi, xl, xr;
-            for (var xr = new xs.constructor(), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], xr.push((x + v2[xi]));
-            return xr
-          }).call(this, v1)
-        },
-        minus = function(v1, v2) {;
-          return (function(xs) {
-            var x, x0, xi, xl, xr;
-            for (var xr = new xs.constructor(), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], xr.push((x - v2[xi]));
-            return xr
-          }).call(this, v1)
-        },
-        times = function(v, f) {;
-          return (function(xs) {
-            var x, x0, xi, xl, xr;
-            for (var xr = new xs.constructor(), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], xr.push((x * f));
-            return xr
-          }).call(this, v)
-        },
-        c_times = function(v1, v2) {;
-          return (function(xs) {
-            var x, x0, xi, xl, xr;
-            for (var xr = new xs.constructor(), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], xr.push((x * v2[xi]));
-            return xr
-          }).call(this, v1)
-        },
-        dot = function(v1, v2) {;
-          return (function(xs) {
-            var x, x0, xi, xl, xr;
-            for (var x0 = (0), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], x0 = (x0 + x * v2[xi]);
-            return x0
-          }).call(this, v1)
-        },
-        likelihood = function(w1, w2, w3) {;
-          return (function() {
-            var d1 = d_window(w2, w1),
-              d2 = d_window(w3, w2),
-              variance_numerator = Math.abs(dot(d1.d_variance, d2.d_variance)),
-              variance_denominator = 1 + Math.abs(luminosity(d1.d_variance) * luminosity(d2.d_variance)),
-              variance_fraction = variance_numerator / variance_denominator,
-              average_numerator = Math.abs(luminosity(d1.d_average) - luminosity(d2.d_average)),
-              average_denominator = 1 + squared(dot(d1.d_average, d2.d_average)),
-              average_fraction = average_numerator / average_denominator;
-            return variance_fraction * average_fraction
-          }).call(this)
-        },
-        window = function(x, y, w, h) {;
-          return (function() {
-            var pixels = pixels_in(x, y, w, h),
-              average = (function(it) {
-                return times(it, (1 / pixels.length))
-              }).call(this, ((function(xs) {
-                var x, x0, xi, xl, xr;
-                for (var x0 = (zero), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], x0 = (plus(x0, x));
-                return x0
-              }).call(this, pixels))),
-              variance = minus((function(xs) {
-                var x, x0, xi, xl, xr;
-                for (var x0 = (zero), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], x0 = (plus(x0, c_times(x, x)));
-                return x0
-              }).call(this, pixels), c_times(average, average));
-            return {
-              pixels: pixels,
-              average: average,
-              variance: variance
-            }
-          }).call(this)
-        },
-        d_window = function(w1, w2) {;
-          return (function() {
-            var d_average = minus(w1.average, w2.average),
-              d_variance = minus(w1.variance, w2.variance);
-            return {
-              d_average: d_average,
-              d_variance: d_variance
-            }
-          }).call(this)
-        },
-        pixels_in = function(x, y, w, h) {;
-          return (function(xs) {
-            var x, x0, xi, xl, xr;
-            for (var xr = new xs.constructor(), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], xr.push.apply(xr, Array.prototype.slice.call(((function(ys) {
-              var y, y0, yi, yl, yr;
-              for (var yr = new ys.constructor(), yi = 0, yl = ys.length; yi < yl; ++yi) y = ys[yi], yr.push((pixel_vector(x, y)));
-              return yr
-            }).call(this, (function(i, u, s) {
-              if ((u - i) * s <= 0) return [];
-              for (var r = [], d = u - i; d > 0 ? i < u : i > u; i += s) r.push(i);
-              return r
-            })((y), (y + h), (1))))));
-            return xr
-          }).call(this, (function(i, u, s) {
-            if ((u - i) * s <= 0) return [];
-            for (var r = [], d = u - i; d > 0 ? i < u : i > u; i += s) r.push(i);
-            return r
-          })((x), (x + w), (1)))
-        },
-        clip_confidences = function(xs) {;
-          return ((function(xs) {
-            var x, x0, xi, xl, xr;
-            for (var xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], (x.confidence = Math.log(Math.max(x.confidence, 1)));
-            return xs
-          }).call(this, xs), (function() {
-            var maximum = (function(xs) {
-              var x, x0, xi, xl, xr;
-              for (var x0 = (0), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], x0 = (Math.max(x0, x.confidence));
-              return x0
-            }).call(this, xs);
-            return (function(xs) {
-              var x, x0, xi, xl, xr;
-              for (var xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], (x.confidence /= maximum);
-              return xs
-            }).call(this, xs)
-          }).call(this))
-        },
-        result = clip_confidences((function(xs) {
-          var x, x0, xi, xl, xr;
-          for (var xr = new xs.constructor(), xi = 0, xl = xs.length; xi < xl; ++xi) x = xs[xi], xr.push.apply(xr, Array.prototype.slice.call(((function(ys) {
-            var y, y0, yi, yl, yr;
-            for (var yr = new ys.constructor(), yi = 0, yl = ys.length; yi < yl; ++yi) y = ys[yi], yr.push(({
-              x: x,
-              y: y,
-              w: 1,
-              h: 1,
-              confidence: likelihood(window(x - 5, y, 5, 5), window(x, y, 5, 5), window(x + 5, y, 5, 5))
-            }));
-            return yr
-          }).call(this, (function(i, u, s) {
-            if ((u - i) * s <= 0) return [];
-            for (var r = [], d = u - i; d > 0 ? i < u : i > u; i += s) r.push(i);
-            return r
-          })((10), (h - settings.radius), (2))))));
-          return xr
-        }).call(this, (function(i, u, s) {
-          if ((u - i) * s <= 0) return [];
-          for (var r = [], d = u - i; d > 0 ? i < u : i > u; i += s) r.push(i);
-          return r
-        })((15), (w - settings.radius), (2))));
-      return result
-    }).call(this)
+// Text locator | Spencer Tipping
+// Licensed under the terms of the MIT source code license
+
+// Introduction.
+// This file implements a text recognition algorithm. The goal is to identify
+// rectangular lines of text within an image, provided a few assumptions are met:
+
+// | 1. The background color is generally consistent.
+//   2. The text is a solid color and contains little noise.
+//   3. The text is arranged into lines and is not tilted.
+
+// The algorithm is based on identifying lines of consistent widths, which should
+// work well for most fonts. This is done by choosing evenly-spaced points
+// throughout the image and scanning horizontal and vertical rays emanating from
+// those points. Each ray is then categorized with a 'text representation vector'
+// array -- this describes the color, distance, and cross-sectional length of each
+// variant segment encountered.
+
+// Here's where it gets interesting. We then collect the variant-segment colors and
+// try to identify convex regions of the image this way. These convex regions can
+// be bounded by rectangles, at which point the problem is solved.
+
+// Point selection and rays.
+// We don't want the algorithm to take too long or consume too much memory, so not
+// every pixel is sampled. It's more important to cover a fine grid vertically than
+// horizontally since we're looking for lines of text rather than words.
+
+// Each point has a total of eight rays: two vertical, two horizontal, and four
+// diagonal. These rays give hints about where text is located. For example, empty
+// text representation vectors on the horizontal rays with dense representation
+// vectors on the vertical rays indicates that the point is probably between lines.
+// Samples on the diagonal vectors only could indicate the corner of a rectangle.
+
+var recognize_text = function (image_data, options) {
+  // Pull out some invariant parts of the image data.
+  var w = image_data.width, h = image_data.height, d = image_data.data;
+
+  var r_bias = 0.2126 / 768.0,
+      g_bias = 0.7152 / 768.0,
+      b_bias = 0.0722 / 768.0;
+
+  var luminosity = function (x, y) {
+    var offset = y * w + x << 2;
+    return d[offset]     * r_bias +
+           d[offset + 1] * g_bias +
+           d[offset + 2] * b_bias;
+  };
+
+  // Process options and cache as locals.
+  var horizontal_spacing = options && options.horizontal_spacing || 8;
+  var vertical_spacing   = options && options.vertical_spacing   || 4;
+  var horizontal_limit   = w / horizontal_spacing >>> 0;
+
+  var ray_length         = options && options.ray_length   || 8;
+  var ray_interval       = options && options.ray_interval || 2;
+
+  // Create the array of points and begin adding variance data to each one.
+  var points = [];
+  for (var x = ray_length; x < w - ray_length; x += horizontal_spacing)
+    for (var y = ray_length; y < h - ray_length; y += vertical_spacing)
+      points.push({x: x, y: y, rays: [[], [], [], [],
+                                      [], [], [], []]});
+
+  // Go through each point and sample the rays. We're looking for cases where
+  // the colors momentarily deviate but then return. The moment strength is
+  // defined as the degree of variance per pixel; that is, normalized per unit
+  // distance. This amounts to taking a sort of integral with respect to the
+  // average:
+  //
+  //     .......
+  //    ..A BB ..
+  // __.._______..____.........__________       <- average
+  // ...         ......       ...........       <- signal
+  //
+  // | 1| 2| 3| 4| 5|                           <- pixel boundaries
+  //
+  // In this example, A is summed into pixel 1, B into pixel 2, etc. Pixels 1
+  // and 2 are joined because they are equivalent relative to the average; but
+  // when they are joined, their values are averaged over the area rather than
+  // summed. They end up forming a discrete region that is then added into the
+  // array of text representation segments.
+  var hv_ratio = horizontal_spacing / vertical_spacing;
+  var ray_directions = [[0,  1], [ 1,  1], [ 1, 0], [ 1, -1],
+                        [0, -1], [-1, -1], [-1, 0], [-1,  1]];
+
+  var ray_distances = [1, Math.sqrt(2)];
+
+  var ray = [];
+  for (var i = 0, l = points.length, p; i < l; ++i) {
+    p = points[i];
+    x = p.x;
+    y = p.y;
+
+    // Do a ray analysis in each direction and store the results into the
+    // point's ray data.
+    for (var j = 0, lj = ray_directions.length; ++j) {
+      var ray_distance = ray_distances[j & 1];
+      var dx = ray_directions[j][0] / ray_distance * ray_interval;
+      var dy = ray_directions[j][1] / ray_distance * ray_interval;
+
+      // Gather the points along the ray. No bounds-checking is necessary
+      // because all of the points are known to be at least ray_length away from
+      // any edge.
+      for (var d = 0, total = 0; d < ray_length; ++d)
+        total += ray[d] = luminosity(x + d * dx >>> 0, y + d * dy >>> 0);
+
+      // Now find places where individual values cross the average. Sum until we
+      // hit an edge, at which point we start over.
+      var average     = total / ray_length;
+      var subtotal    = 0;
+      var subdistance = 0;
+
+      for (var d = 0; d < ray_length; ++d)
+        // Any sample that opposes the current direction of the subtotal marks
+        // an edge. When we see this, we grab the current subtotal, divided by
+        // the distance it represents, and start a new sample.
+        if (d > 0 && subtotal - average >= 0 ^ ray[d] - average >= 0)
+          subtotal += ray[d] - average,
+          ++subdistance;
+        else
+          p.rays[d].push({value:    subtotal / subdistance,
+                          position: d,
+                          length:   subdistance}),
+          subtotal    = ray[d] - average,
+          subdistance = 1;
+
+      // Note that we don't collect the last sample if it is incomplete. It
+      // needs to cross the average both ways so we can determine its distance.
+    }
   }
-})();
+
+  // Now we have all of the ray data we need. At this point we should be able to
+  // use some heuristics to identify line boundaries and horizontal text edges.
+
+  // TODO: finish this
+  return [];
+};
+
+// Generated by SDoc 

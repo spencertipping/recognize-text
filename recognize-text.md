@@ -3,105 +3,137 @@ Licensed under the terms of the MIT source code license
 
 # Introduction
 
-This function takes an HTML canvas ImageData object and returns a an array of objects describing likely text coordinates. The return value looks like this:
+This file implements a text recognition algorithm. The goal is to identify
+rectangular lines of text within an image, provided a few assumptions are met:
 
-    [{x: <integer>, y: <integer>, width: <integer>, height: <integer>, confidence: <float from 0 to 1>, color: [r, g, b]}, ...]
+    1. The background color is generally consistent.
+    2. The text is a solid color and contains little noise.
+    3. The text is arranged into lines and is not tilted.
 
-Text is identified in mostly-gapless lines. A gap wider than the line height is enough to separate two regions of text even if they are on the same line.
+The algorithm is based on identifying lines of consistent widths, which should
+work well for most fonts. This is done by choosing evenly-spaced points
+throughout the image and scanning horizontal and vertical rays emanating from
+those points. Each ray is then categorized with a 'text representation vector'
+array -- this describes the color, distance, and cross-sectional length of each
+variant segment encountered.
 
-    caterwaul.offline('js_all', function () {
-      recognize_text(image_data, options) = result
+Here's where it gets interesting. We then collect the variant-segment colors and
+try to identify convex regions of the image this way. These convex regions can
+be bounded by rectangles, at which point the problem is solved.
 
-      -where [default_options() = {radius: 16},
-              settings          = default_options() -se [options %k*![it[x] = options[x]] -seq -when.options],
+# Point selection and rays
 
-              w = image_data.width,
-              h = image_data.height,
+We don't want the algorithm to take too long or consume too much memory, so not
+every pixel is sampled. It's more important to cover a fine grid vertically than
+horizontally since we're looking for lines of text rather than words.
 
-              pixel_offset(x, y) = y * w + x << 2,
-              pixel_vector(x, y) = [d[o], d[o + 1], d[o + 2]] -where [d = image_data.data, o = pixel_offset(x, y)],
+Each point has a total of eight rays: two vertical, two horizontal, and four
+diagonal. These rays give hints about where text is located. For example, empty
+text representation vectors on the horizontal rays with dense representation
+vectors on the vertical rays indicates that the point is probably between lines.
+Samples on the diagonal vectors only could indicate the corner of a rectangle.
 
-              luminosity_vector  = [0.2126, 0.7152, 0.0722],
-              luminosity(v)      = v /-dot/ luminosity_vector,
+    var recognize_text = function (image_data, options) {
+      // Pull out some invariant parts of the image data.
+      var w = image_data.width, h = image_data.height, d = image_data.data;
 
-              squared(x)         = x * x,
+      var r_bias = 0.2126 / 768.0,
+          g_bias = 0.7152 / 768.0,
+          b_bias = 0.0722 / 768.0;
 
-              zero               = [0, 0, 0],
-              plus(v1, v2)       = v1         *[x + v2[xi]] -seq,
-              minus(v1, v2)      = v1         *[x - v2[xi]] -seq,
-              times(v, f)        = v          *[x * f]      -seq,
-              c_times(v1, v2)    = v1         *[x * v2[xi]] -seq,
-              dot(v1, v2)        = v1 /[0][x0 + x * v2[xi]] -seq,
+      var luminosity = function (x, y) {
+        var offset = y * w + x << 2;
+        return d[offset]     * r_bias +
+               d[offset + 1] * g_bias +
+               d[offset + 2] * b_bias;
+      };
 
-# Recognition algorithm
+      // Process options and cache as locals.
+      var horizontal_spacing = options && options.horizontal_spacing || 8;
+      var vertical_spacing   = options && options.vertical_spacing   || 4;
+      var horizontal_limit   = w / horizontal_spacing >>> 0;
 
-The idea here is to use a few heuristics to pick out likely candidates for text. Text has the following characteristics:
+      var ray_length         = options && options.ray_length   || 8;
+      var ray_interval       = options && options.ray_interval || 2;
 
-    1. Density of text pixels is low, but text regions tend to be noisy.
-    2. Text pixels are always the same color as one another.
-    3. Text does not impact the color of the background beyond antialiasing artifacts.
-    4. Noise level changes tend to have high locality.
+      // Create the array of points and begin adding variance data to each one.
+      var points = [];
+      for (var x = ray_length; x < w - ray_length; x += horizontal_spacing)
+        for (var y = ray_length; y < h - ray_length; y += vertical_spacing)
+          points.push({x: x, y: y, rays: [[], [], [], [],
+                                          [], [], [], []]});
 
-We can identify text boundaries using a sweeping-line design. We are looking for local changes in the amount of noise. Longer lines will be able to detect larger fonts; this is a customizable
-parameter called 'radius'. The default size of 16 should be able to detect text up to about 32px.
+      // Go through each point and sample the rays. We're looking for cases where
+      // the colors momentarily deviate but then return. The moment strength is
+      // defined as the degree of variance per pixel; that is, normalized per unit
+      // distance. This amounts to taking a sort of integral with respect to the
+      // average:
+      //
+      //     .......
+      //    ..A BB ..
+      // __.._______..____.........__________       <- average
+      // ...         ......       ...........       <- signal
+      //
+      // | 1| 2| 3| 4| 5|                           <- pixel boundaries
+      //
+      // In this example, A is summed into pixel 1, B into pixel 2, etc. Pixels 1
+      // and 2 are joined because they are equivalent relative to the average; but
+      // when they are joined, their values are averaged over the area rather than
+      // summed. They end up forming a discrete region that is then added into the
+      // array of text representation segments.
+      var hv_ratio = horizontal_spacing / vertical_spacing;
+      var ray_directions = [[0,  1], [ 1,  1], [ 1, 0], [ 1, -1],
+                            [0, -1], [-1, -1], [-1, 0], [-1,  1]];
 
-The sweeping line design involves using a 1xN-pixel window that slides perpendicularly to its axis. This window records the text-likelihood delta per pixel, which provides the data necessary
-to identify text regions.
+      var ray_distances = [1, Math.sqrt(2)];
 
-    Window moves this way ->    +---+
-                             x11|x12|x13 x14 x15 x16 ...
-                                |   |
-                             x21|x22|x23 x24 x25 x26 ...
-                                |   |
-                             ...|...|
-                                |   |
-                             x81|x82|x83 x84 x85 x86 ...
-                                +---+
-                             x91 x92 x93 x94 x95 x96 ...
-                             ...
+      var ray = [];
+      for (var i = 0, l = points.length, p; i < l; ++i) {
+        p = points[i];
+        x = p.x;
+        y = p.y;
 
-Windows provide two color-vector aggregates:
+        // Do a ray analysis in each direction and store the results into the
+        // point's ray data.
+        for (var j = 0, lj = ray_directions.length; ++j) {
+          var ray_distance = ray_distances[j & 1];
+          var dx = ray_directions[j][0] / ray_distance * ray_interval;
+          var dy = ray_directions[j][1] / ray_distance * ray_interval;
 
-    1. Average value of all pixels within the window.
-    2. Variance of all pixels within the window.
+          // Gather the points along the ray. No bounds-checking is necessary
+          // because all of the points are known to be at least ray_length away from
+          // any edge.
+          for (var d = 0, total = 0; d < ray_length; ++d)
+            total += ray[d] = luminosity(x + d * dx >>> 0, y + d * dy >>> 0);
 
-All of these vectors are specified as color vectors that will later be unified under a luminosity function. We need to preserve color components to detect uniformity of color as well as of
-luminosity. Given three adjacent windows w1, w2, and w3, this is the likelihood that the region is made up of text:
+          // Now find places where individual values cross the average. Sum until we
+          // hit an edge, at which point we start over.
+          var average     = total / ray_length;
+          var subtotal    = 0;
+          var subdistance = 0;
 
-             |dv1 · dv2|        |L(da1) - L(da2)|     dv1 = variance(window 2) - variance(window 1)   [vector]
-    l = --------------------- * -----------------     dv2 = variance(window 3) - variance(window 2)   [vector]
-        1 + |L(dv1) * L(dv2)|   1 + (da1 · da2)^2     da1 = average(window 2)  - average(window 1)    [vector]
-                                                      da2 = average(window 3)  - average(window 2)    [vector]
-                                                      L(v) = luminosity of vector                     [scalar]
+          for (var d = 0; d < ray_length; ++d)
+            // Any sample that opposes the current direction of the subtotal marks
+            // an edge. When we see this, we grab the current subtotal, divided by
+            // the distance it represents, and start a new sample.
+            if (d > 0 && subtotal - average >= 0 ^ ray[d] - average >= 0)
+              subtotal += ray[d] - average,
+              ++subdistance;
+            else
+              p.rays[d].push({value:    subtotal / subdistance,
+                              position: d,
+                              length:   subdistance}),
+              subtotal    = ray[d] - average,
+              subdistance = 1;
 
-The first fraction is variance-bound and the second is average-bound. We're looking for places where the average color luminosity does not change much, but the variance does. Text is highly
-nonrepetitive from one pixel to another, but often preserves the absolute brightness.
+          // Note that we don't collect the last sample if it is incomplete. It
+          // needs to cross the average both ways so we can determine its distance.
+        }
+      }
 
-              likelihood(w1, w2, w3) = variance_fraction * average_fraction
-                                       -where [d1                   = w2 /-d_window/ w1,
-                                               d2                   = w3 /-d_window/ w2,
+      // Now we have all of the ray data we need. At this point we should be able to
+      // use some heuristics to identify line boundaries and horizontal text edges.
 
-                                               variance_numerator   = d1.d_variance /-dot/ d2.d_variance /!Math.abs,
-                                               variance_denominator = 1 + luminosity(d1.d_variance) * luminosity(d2.d_variance) /!Math.abs,
-                                               variance_fraction    = variance_numerator / variance_denominator,
-
-                                               average_numerator    = Math.abs(luminosity(d1.d_average) - luminosity(d2.d_average)),
-                                               average_denominator  = 1 + d1.d_average /-dot/ d2.d_average /!squared,
-                                               average_fraction     = average_numerator / average_denominator],
-
-              // Easy optimization: memoize this function
-              window(x, y, w, h)     = wcapture [pixels   = pixels_in(x, y, w, h),
-                                                 average  = pixels /[zero][x0 /-plus/ x] -seq -re- it /-times/ (1 / pixels.length),
-                                                 variance = pixels /[zero][x0 |-plus| x /-c_times/ x] -seq |-minus| average /-c_times/ average],
-
-              d_window(w1, w2)       = wcapture [d_average  = w1.average  /-minus/ w2.average,
-                                                 d_variance = w1.variance /-minus/ w2.variance],
-
-              pixels_in(x, y, w, h)  = n[x, x + w] *~![n[y, y + h] *y[pixel_vector(x, y)] -seq] -seq,
-              clip_confidences(xs)   = xs *![x.confidence = Math.max(x.confidence, 1) /!Math.log] -seq -then-
-                                       xs *![x.confidence /= maximum] /seq /where [maximum = xs /[0][x0 /-Math.max/ x.confidence] -seq],
-              // Test result:
-              result                 = clip_confidences(n[15, w - settings.radius, 2] *~![n[10, h - settings.radius, 2]
-                                                        *y[{x: x, y: y, w: 1, h: 1, confidence: likelihood(window(x - 5, y, 5, 5),
-                                                                                                           window(x,     y, 5, 5),
-                                                                                                           window(x + 5, y, 5, 5))}] -seq] -seq)]});
+      // TODO: finish this
+      return [];
+    };
