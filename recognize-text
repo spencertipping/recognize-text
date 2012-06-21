@@ -1852,12 +1852,15 @@ var recognize_text = function (image_data, options) {
   var ray_length         = options && options.ray_length   || 8;
   var ray_interval       = options && options.ray_interval || 2;
 
+  var interior_bias      = options && options.interior_bias    || 1;
+  var corner_threshold   = options && options.corner_threshold || 1;
+
   // Create the array of points and begin adding variance data to each one.
   var points = [];
   for (var x = ray_length; x < w - ray_length; x += horizontal_spacing)
     for (var y = ray_length; y < h - ray_length; y += vertical_spacing)
-      points.push({x: x, y: y, rays: [[], [], [], [],
-                                      [], [], [], []]});
+      points.push({x: x, y: y, index: points.length, rays: [[], [], [], [],
+                                                            [], [], [], []]});
 
   // Go through each point and sample the rays. We're looking for cases where
   // the colors momentarily deviate but then return. The moment strength is
@@ -2023,7 +2026,7 @@ var recognize_text = function (image_data, options) {
     var normalized_d_bias = d_bias / d_total + 0.5;
 
     p.classification = {
-      interior:    h_total,
+      interior:    interior_bias * h_total,
       left_edge:   h_bias < 0 && -h_bias / (1 + v_total),
       right_edge:  h_bias > 0 &&  h_bias / (1 + v_total),
       top_edge:    (1 - normalized_v_bias) * v_factor,
@@ -2032,12 +2035,73 @@ var recognize_text = function (image_data, options) {
       se_corner:   normalized_d_bias       * d_factor};
   }
 
-  // Last step: identify rectangles within the image. To do this, we locate all
-  // points whose nw_corner or se_corner factors are significant. We then match
-  // these up by distance and begin joining adjacent rectangles.
-  // TODO
+  // Identify rectangles within the image. To do this, we locate all points
+  // whose nw_corner or se_corner factors are significant. We then match these
+  // up by distance and begin joining adjacent rectangles. This is where the
+  // algorithm begins to become discrete.
 
-  return [];
+  var nw_corners = [], se_corners = [];
+  var rows = [], columns = [];
+
+  for (var i = 0, l = points.length, p; i < l; ++i) {
+    p = points[i];
+    (columns[p.x] || (columns[p.x] = [])).push(p);
+    (rows[p.y]    || (rows[p.y]    = [])).push(p);
+
+    // Mark start points in case we need to search for the nearest se corner at
+    // some point.
+    p.se_corner_index = se_corners.length;
+    p.nw_corner_index = nw_corners.length;
+
+    // Use double linking; p.right is the next-rightwards point, and p.left is
+    // the next-leftwards...
+    if (rows[p.y].length > 1) {
+      var leftward = rows[p.y][rows[p.y].length - 2];
+      leftward.right = p;
+      p.left = leftward;
+    }
+
+    // ... and do the same vertically.
+    if (columns[p.x].length > 1) {
+      var upward = columns[p.x][columns[p.x].length - 2];
+      upward.down = p;
+      p.up = upward;
+    }
+
+    if (p.classification.nw_corner > corner_bias)
+      nw_corners.push(p);
+
+    if (p.classification.se_corner > corner_bias)
+      se_corners.push(p);
+  }
+
+  // For each northwest corner, identify the closest southeast corner if there
+  // is one. Discard any northwest corners that have no closest southeast
+  // corner. We're looking for a corner that is down and to the right.
+  for (var i = 0, l = nw_corners.length, p; i < l; ++i) {
+    p = nw_corners[i];
+    var se_corner = null;
+    for (var j = p.se_corner_index, lj = se_corners.length; ++j)
+      if (se_corners[j].x > p.x && se_corners[j].y > p.y) {
+        se_corner = se_corners[j];
+        break;
+      }
+
+    // At this point we may or may not have a southeast corner. If we don't,
+    // p.se_corner will be null and that will indicate that p is not a real
+    // rectangle corner.
+    p.se_corner = se_corner;
+  }
+
+  // Last step: take each northwest corner and fold it up into a rectangle.
+  // TODO temporary implementation:
+  var result = [];
+  for (var i = 0, l = nw_corners.length, p, c; i < l; ++i) {
+    p = nw_corners[i],
+    c = p.se_corner;
+    if (c) result.push({x: p.x, y: p.y, w: c.x - p.x, h: c.y - p.y});
+  }
+  return result;
 };
 
 __
