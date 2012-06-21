@@ -33,7 +33,10 @@ text representation vectors on the horizontal rays with dense representation
 vectors on the vertical rays indicates that the point is probably between lines.
 Samples on the diagonal vectors only could indicate the corner of a rectangle.
 
-    var recognize_text = function (image_data, options) {
+    var tracer = catastrophe({
+      patterns: ['_x + _y', '_x * _y', '_x - _y', '_x / _y']});
+
+    var recognize_text = tracer(function (image_data, options) {
       // Pull out some invariant parts of the image data.
       var w = image_data.width, h = image_data.height, d = image_data.data;
 
@@ -50,14 +53,14 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
 
       // Process options and cache as locals.
       var horizontal_spacing = options && options.horizontal_spacing || 8;
-      var vertical_spacing   = options && options.vertical_spacing   || 1;
+      var vertical_spacing   = options && options.vertical_spacing   || 3;
       var horizontal_limit   = w / horizontal_spacing >>> 0;
 
       var ray_length         = options && options.ray_length   || 8;
       var ray_interval       = options && options.ray_interval || 2;
 
       var interior_bias      = options && options.interior_bias    || 1;
-      var corner_threshold   = options && options.corner_threshold || 1;
+      var corner_threshold   = options && options.corner_threshold || 0.5;
 
       // Create the array of points and begin adding variance data to each one.
       var points = [];
@@ -98,7 +101,7 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
 
         // Do a ray analysis in each direction and store the results into the
         // point's ray data.
-        for (var j = 0, lj = ray_directions.length; ++j) {
+        for (var j = 0, lj = ray_directions.length; j < lj; ++j) {
           var ray_distance = ray_distances[j & 1];
           var dx = ray_directions[j][0] / ray_distance * ray_interval;
           var dy = ray_directions[j][1] / ray_distance * ray_interval;
@@ -172,18 +175,18 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
         // First calculate ray magnitudes for the point. We also calculate the
         // weighted-average distance of events along this ray so that we have the
         // option to correct for minor distances later on.
-        for (var j = 0, lj = (p = points[i]).rays.length, r; j < lj; ++j) {
+        for (var j = 0, lj = p.rays.length, r; j < lj; ++j) {
           var magnitude = 0;
           var distance  = 0;
-          p.ray_summaries[i] = {};
+          p.ray_summaries[j] = {};
 
           for (var k = 0, lk = (r = p.rays[j]).length, moment; k < lk; ++k)
             moment     = r[k].value / r[k].length,
             magnitude += moment,
             distance  += moment * r[k].position;
 
-          p.ray_summaries[i].magnitude = magnitude;
-          p.ray_summaries[i].distance  = distance / magnitude;
+          p.ray_summaries[j].magnitude = magnitude;
+          p.ray_summaries[j].distance  = distance / magnitude;
         }
 
         // Now that we have the summary data, calculate the relative likelihood of
@@ -195,7 +198,7 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
         var v_bias = 0, v_total = 0;
         var d_bias = 0, d_total = 0;
 
-        for (var j = 0; lj = p.ray_summaries.length, r; j < lj; ++j) {
+        for (var j = 0, lj = p.ray_summaries.length, r; j < lj; ++j) {
           r = p.ray_summaries[j];
 
           // First add up horizontal stuff. We can just use the ray_directions array
@@ -272,10 +275,10 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
           p.up = upward;
         }
 
-        if (p.classification.nw_corner > corner_bias)
+        if (p.classification.nw_corner > corner_threshold)
           nw_corners.push(p);
 
-        if (p.classification.se_corner > corner_bias)
+        if (p.classification.se_corner > corner_threshold)
           se_corners.push(p);
       }
 
@@ -285,7 +288,7 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
       for (var i = 0, l = nw_corners.length, p; i < l; ++i) {
         p = nw_corners[i];
         var se_corner = null;
-        for (var j = p.se_corner_index, lj = se_corners.length; ++j)
+        for (var j = p.se_corner_index, lj = se_corners.length; j < lj; ++j)
           if (se_corners[j].x > p.x && se_corners[j].y > p.y) {
             se_corner = se_corners[j];
             break;
@@ -306,4 +309,4 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
         if (c) result.push({x: p.x, y: p.y, w: c.x - p.x, h: c.y - p.y});
       }
       return result;
-    };
+    });
