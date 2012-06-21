@@ -50,7 +50,7 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
 
       // Process options and cache as locals.
       var horizontal_spacing = options && options.horizontal_spacing || 8;
-      var vertical_spacing   = options && options.vertical_spacing   || 4;
+      var vertical_spacing   = options && options.vertical_spacing   || 1;
       var horizontal_limit   = w / horizontal_spacing >>> 0;
 
       var ray_length         = options && options.ray_length   || 8;
@@ -120,7 +120,7 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
               subtotal += ray[d] - average,
               ++subdistance;
             else
-              p.rays[d].push({value:    subtotal / subdistance,
+              p.rays[d].push({value:    Math.abs(subtotal),
                               position: d,
                               length:   subdistance}),
               subtotal    = ray[d] - average,
@@ -133,7 +133,113 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
 
       // Now we have all of the ray data we need. At this point we should be able to
       // use some heuristics to identify line boundaries and horizontal text edges.
+      // This involves classifying each pixel as a probable top or bottom edge,
+      // corner, or left/right edge. We then take these classifications and choose
+      // the smallest set of rectangles that covers all of the pixels.
+      //
+      // Here are the classification rules:
+      //
+      // 1. We observe horizontal collisions but no verticals.
+      //    This usually means we're in between letters or words, and we mark the
+      //    pixel as being a probable rectangle interior.
+      //
+      // 2. Vertical collisions but no horizontals.
+      //    We're probably between lines of text, so the pixel is marked as a
+      //    probable top/bottom edge. These two quantities (top vs bottom) differ;
+      //    if we see ray collisions upwards, then it's likely to be the bottom of a
+      //    rectangle; if we see downwards collisions, it's likely to be the top. It
+      //    can also be both, but it doesn't have to be.
+      //
+      // 3. Diagonal collisions but neither vertical nor horizontal.
+      //    Likely to be a corner. These are used to signal start/end of rectangles;
+      //    as such, we look for pixels with diagonal collisions going southeast or
+      //    northwest.
+      //
+      // The classifier tries to be continuous, since we don't yet have enough
+      // information to be fully discrete. To do this, we turn the above cases into
+      // ratio detectors; that is, we take each ray's magnitude and bias the
+      // relevant events by that factor. So, for instance, if we observe a faint
+      // collision horizontally and a strong one diagonally, we report a start/end
+      // marker more strongly than we do an interior marker.
 
-      // TODO: finish this
+      for (var i = 0, l = points.length, p; i < l; ++i) {
+        p = points[i];
+        p.ray_summaries = [];
+
+        // First calculate ray magnitudes for the point. We also calculate the
+        // weighted-average distance of events along this ray so that we have the
+        // option to correct for minor distances later on.
+        for (var j = 0, lj = (p = points[i]).rays.length, r; j < lj; ++j) {
+          var magnitude = 0;
+          var distance  = 0;
+          p.ray_summaries[i] = {};
+
+          for (var k = 0, lk = (r = p.rays[j]).length, moment; k < lk; ++k)
+            moment     = r[k].value / r[k].length,
+            magnitude += moment,
+            distance  += moment * r[k].position;
+
+          p.ray_summaries[i].magnitude = magnitude;
+          p.ray_summaries[i].distance  = distance / magnitude;
+        }
+
+        // Now that we have the summary data, calculate the relative likelihood of
+        // each case above. We do this by using a horizontal bias (directional
+        // average of horizontal ray magnitudes), horizontal total (total of
+        // horizontal ray magnitudes), and doing the same for vertical and NW/SE
+        // diagonal rays.
+        var h_bias = 0, h_total = 0;
+        var v_bias = 0, v_total = 0;
+        var d_bias = 0, d_total = 0;
+
+        for (var j = 0; lj = p.ray_summaries.length, r; j < lj; ++j) {
+          r = p.ray_summaries[j];
+
+          // First add up horizontal stuff. We can just use the ray_directions array
+          // to get the direction.
+          if (ray_directions[j][1] === 0)
+            h_bias  += r.magnitude * ray_directions[j][0],
+            h_total += r.magnitude * Math.abs(ray_directions[j][0]);
+
+          if (ray_directions[j][0] === 0)
+            v_bias  += r.magnitude * ray_directions[j][1],
+            v_total += r.magnitude * Math.abs(ray_directions[j][1]);
+
+          // Diagonals are identified by using the dot product against the vector
+          // [1, 1]. This happens to just be the sum of the two components.
+          var is_diagonal = ray_directions[j][0] && ray_directions[j][1];
+          var dot         = ray_directions[j][0] + ray_directions[j][1];
+          if (is_diagonal && dot)
+            d_bias  += r.magnitude * dot,
+            d_total += r.magnitude * Math.abs(dot);
+        }
+
+        // Classify the pixel in terms of ratios and store the result back onto the
+        // pixel. Horizontal biasing is different from the other cases because we
+        // want to join adjacent rectangles rather than separating them.
+        var v_factor =     v_total / (1 + h_total);
+        var d_factor = 2 * d_total / (2 + h_total + v_total);
+
+        // The vertical and diagonal biases will be somewhere between -magnitude and
+        // magnitude. We need to figure out how much they lean to each side and use
+        // that as an adjustment factor.
+        var normalized_v_bias = v_bias / v_total + 0.5;
+        var normalized_d_bias = d_bias / d_total + 0.5;
+
+        p.classification = {
+          interior:    h_total,
+          left_edge:   h_bias < 0 && -h_bias / (1 + v_total),
+          right_edge:  h_bias > 0 &&  h_bias / (1 + v_total),
+          top_edge:    (1 - normalized_v_bias) * v_factor,
+          bottom_edge: normalized_v_bias       * v_factor,
+          nw_corner:   (1 - normalized_d_bias) * d_factor,
+          se_corner:   normalized_d_bias       * d_factor};
+      }
+
+      // Last step: identify rectangles within the image. To do this, we locate all
+      // points whose nw_corner or se_corner factors are significant. We then match
+      // these up by distance and begin joining adjacent rectangles.
+      // TODO
+
       return [];
     };
