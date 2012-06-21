@@ -33,12 +33,9 @@ text representation vectors on the horizontal rays with dense representation
 vectors on the vertical rays indicates that the point is probably between lines.
 Samples on the diagonal vectors only could indicate the corner of a rectangle.
 
-    var tracer = catastrophe({
-      patterns: ['_x + _y', '_x * _y', '_x - _y', '_x / _y']});
-
-    var recognize_text = tracer(function (image_data, options) {
+    var recognize_text = function (image_data, options) {
       // Pull out some invariant parts of the image data.
-      var w = image_data.width, h = image_data.height, d = image_data.data;
+      var w = image_data.width, h = image_data.height, data = image_data.data;
 
       var r_bias = 0.2126 / 768.0,
           g_bias = 0.7152 / 768.0,
@@ -46,26 +43,31 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
 
       var luminosity = function (x, y) {
         var offset = y * w + x << 2;
-        return d[offset]     * r_bias +
-               d[offset + 1] * g_bias +
-               d[offset + 2] * b_bias;
+        return data[offset]     * r_bias +
+               data[offset + 1] * g_bias +
+               data[offset + 2] * b_bias;
       };
 
       // Process options and cache as locals.
       var horizontal_spacing = options && options.horizontal_spacing || 8;
-      var vertical_spacing   = options && options.vertical_spacing   || 3;
-      var horizontal_limit   = w / horizontal_spacing >>> 0;
+      var vertical_spacing   = options && options.vertical_spacing   || 2;
 
-      var ray_length         = options && options.ray_length   || 8;
-      var ray_interval       = options && options.ray_interval || 2;
+      var ray_interval       = options && options.ray_interval || 1;
+      var ray_steps          = options && options.ray_steps    || 6;
+      var ray_aspect         = options && options.ray_aspect   || 2;
+      var ray_length_x       = ray_steps * ray_interval * ray_aspect;
+      var ray_length_y       = ray_steps * ray_interval;
 
-      var interior_bias      = options && options.interior_bias    || 1;
-      var corner_threshold   = options && options.corner_threshold || 0.5;
+      var interior_bias      = options && options.interior_bias      || 1;
+      var left_edge_bias     = options && options.left_edge_bias     || 0.0;
+      var right_edge_bias    = options && options.right_edge_bias    || 0.0;
+      var minimum_interior   = options && options.minimum_interior   || 0.5;
+      var minimum_confidence = options && options.minimum_confidence || 0.1;
 
       // Create the array of points and begin adding variance data to each one.
       var points = [];
-      for (var x = ray_length; x < w - ray_length; x += horizontal_spacing)
-        for (var y = ray_length; y < h - ray_length; y += vertical_spacing)
+      for (var x = ray_length_y; x < w - ray_length_x; x += horizontal_spacing)
+        for (var y = ray_length_y; y < h - ray_length_y; y += vertical_spacing)
           points.push({x: x, y: y, index: points.length, rays: [[], [], [], [],
                                                                 [], [], [], []]});
 
@@ -91,7 +93,8 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
       var ray_directions = [[0,  1], [ 1,  1], [ 1, 0], [ 1, -1],
                             [0, -1], [-1, -1], [-1, 0], [-1,  1]];
 
-      var ray_distances = [1, Math.sqrt(2)];
+      for (var i = 0, l = ray_directions.length; i < l; ++i)
+        ray_directions[i][0] *= ray_aspect;
 
       var ray = [];
       for (var i = 0, l = points.length, p; i < l; ++i) {
@@ -102,31 +105,30 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
         // Do a ray analysis in each direction and store the results into the
         // point's ray data.
         for (var j = 0, lj = ray_directions.length; j < lj; ++j) {
-          var ray_distance = ray_distances[j & 1];
-          var dx = ray_directions[j][0] / ray_distance * ray_interval;
-          var dy = ray_directions[j][1] / ray_distance * ray_interval;
+          var dx = ray_directions[j][0] * ray_interval;
+          var dy = ray_directions[j][1] * ray_interval;
 
           // Gather the points along the ray. No bounds-checking is necessary
           // because all of the points are known to be at least ray_length away from
           // any edge.
-          for (var d = 0, total = 0; d < ray_length; ++d)
+          for (var d = 0, total = 0; d < ray_steps; ++d)
             total += ray[d] = luminosity(x + d * dx >>> 0, y + d * dy >>> 0);
 
           // Now find places where individual values cross the average. Sum until we
           // hit an edge, at which point we start over.
-          var average     = total / ray_length;
+          var average     = total / ray_steps;
           var subtotal    = 0;
           var subdistance = 0;
 
-          for (var d = 0; d < ray_length; ++d)
+          for (var d = 0; d < ray_steps; ++d)
             // Any sample that opposes the current direction of the subtotal marks
             // an edge. When we see this, we grab the current subtotal, divided by
             // the distance it represents, and start a new sample.
-            if (d > 0 && subtotal - average >= 0 ^ ray[d] - average >= 0)
+            if (d === 0 || subtotal - average >= 0 === ray[d] - average >= 0)
               subtotal += ray[d] - average,
               ++subdistance;
             else
-              p.rays[d].push({value:    Math.abs(subtotal),
+              p.rays[j].push({value:    Math.abs(subtotal),
                               position: d,
                               length:   subdistance}),
               subtotal    = ray[d] - average,
@@ -178,15 +180,14 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
         for (var j = 0, lj = p.rays.length, r; j < lj; ++j) {
           var magnitude = 0;
           var distance  = 0;
-          p.ray_summaries[j] = {};
 
           for (var k = 0, lk = (r = p.rays[j]).length, moment; k < lk; ++k)
-            moment     = r[k].value / r[k].length,
+            moment     = r[k].value / (r[k].length * (r[k].position + 1)),
             magnitude += moment,
             distance  += moment * r[k].position;
 
-          p.ray_summaries[j].magnitude = magnitude;
-          p.ray_summaries[j].distance  = distance / magnitude;
+          p.ray_summaries[j] = {magnitude: magnitude,
+                                distance:  distance / magnitude || 0};
         }
 
         // Now that we have the summary data, calculate the relative likelihood of
@@ -223,42 +224,47 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
         // Classify the pixel in terms of ratios and store the result back onto the
         // pixel. Horizontal biasing is different from the other cases because we
         // want to join adjacent rectangles rather than separating them.
-        var v_factor =     v_total / (1 + h_total);
-        var d_factor = 2 * d_total / (2 + h_total + v_total);
-
+        //
         // The vertical and diagonal biases will be somewhere between -magnitude and
         // magnitude. We need to figure out how much they lean to each side and use
         // that as an adjustment factor.
-        var normalized_v_bias = v_bias / v_total + 0.5;
-        var normalized_d_bias = d_bias / d_total + 0.5;
+        var normalized_v_bias = v_bias + (v_total * 0.5);
+        var normalized_d_bias = d_bias + (d_total * 0.5);
 
-        p.classification = {
-          interior:    interior_bias * h_total,
-          left_edge:   h_bias < 0 && -h_bias / (1 + v_total),
-          right_edge:  h_bias > 0 &&  h_bias / (1 + v_total),
-          top_edge:    (1 - normalized_v_bias) * v_factor,
-          bottom_edge: normalized_v_bias       * v_factor,
-          nw_corner:   (1 - normalized_d_bias) * d_factor,
-          se_corner:   normalized_d_bias       * d_factor};
+        var interior_value    = interior_bias * h_total + d_total + v_total;
+        var left_edge_value   = h_bias < 0 && -h_bias;
+        var right_edge_value  = h_bias > 0 &&  h_bias;
+        var top_edge_value    = normalized_v_bias;
+        var bottom_edge_value = v_total - normalized_v_bias;
+        var nw_corner_value   = normalized_d_bias;
+        var se_corner_value   = d_total - normalized_d_bias;
+
+        // Normalize the vector distance.
+        var classification_distance = Math.max(1, Math.sqrt(
+          interior_value    * interior_value +
+          left_edge_value   * left_edge_value +
+          right_edge_value  * right_edge_value +
+          top_edge_value    * top_edge_value +
+          bottom_edge_value * bottom_edge_value +
+          nw_corner_value   * nw_corner_value +
+          se_corner_value   * se_corner_value));
+
+        p.classification_distance = classification_distance;
+        p.interior    = interior_value    / classification_distance;
+        p.left_edge   = left_edge_value   / classification_distance;
+        p.right_edge  = right_edge_value  / classification_distance;
+        p.top_edge    = top_edge_value    / classification_distance;
+        p.bottom_edge = bottom_edge_value / classification_distance;
+        p.nw_corner   = nw_corner_value   / classification_distance;
+        p.se_corner   = se_corner_value   / classification_distance;
       }
 
-      // Identify rectangles within the image. To do this, we locate all points
-      // whose nw_corner or se_corner factors are significant. We then match these
-      // up by distance and begin joining adjacent rectangles. This is where the
-      // algorithm begins to become discrete.
-
-      var nw_corners = [], se_corners = [];
+      // Doubly link all points both vertically and horizontally.
       var rows = [], columns = [];
-
       for (var i = 0, l = points.length, p; i < l; ++i) {
         p = points[i];
         (columns[p.x] || (columns[p.x] = [])).push(p);
         (rows[p.y]    || (rows[p.y]    = [])).push(p);
-
-        // Mark start points in case we need to search for the nearest se corner at
-        // some point.
-        p.se_corner_index = se_corners.length;
-        p.nw_corner_index = nw_corners.length;
 
         // Use double linking; p.right is the next-rightwards point, and p.left is
         // the next-leftwards...
@@ -274,39 +280,122 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
           upward.down = p;
           p.up = upward;
         }
-
-        if (p.classification.nw_corner > corner_threshold)
-          nw_corners.push(p);
-
-        if (p.classification.se_corner > corner_threshold)
-          se_corners.push(p);
       }
 
-      // For each northwest corner, identify the closest southeast corner if there
-      // is one. Discard any northwest corners that have no closest southeast
-      // corner. We're looking for a corner that is down and to the right.
-      for (var i = 0, l = nw_corners.length, p; i < l; ++i) {
-        p = nw_corners[i];
-        var se_corner = null;
-        for (var j = p.se_corner_index, lj = se_corners.length; j < lj; ++j)
-          if (se_corners[j].x > p.x && se_corners[j].y > p.y) {
-            se_corner = se_corners[j];
-            break;
-          }
+      // Now create the sorted array and sort by interior classification.
+      var sorted_by_interior = points.slice().sort(function (x, y) {
+        return y.interior - x.interior;
+      });
 
-        // At this point we may or may not have a southeast corner. If we don't,
-        // p.se_corner will be null and that will indicate that p is not a real
-        // rectangle corner.
-        p.se_corner = se_corner;
+      // Start with the strongest interior classification and proceed left, right,
+      // up, and down until we start hitting edges. These become the extremities of
+      // the rectangle.
+      var rectangles         = [];
+      var maximum_confidence = 0;
+      for (var i = 0, l = sorted_by_interior.length, p;
+           i < l && sorted_by_interior[i].interior > minimum_interior;
+           ++i) {
+        p = sorted_by_interior[i];
+
+        if (!(p.up && p.down && p.left && p.right))
+          continue;
+
+        // Look for top/bottom edges first.
+        var top_edge    = p.up;
+        var bottom_edge = p.down;
+
+        var top_moment   = 0;
+        var top_total    = 0;
+        var top_distance = 0;
+        while (top_edge.up
+            && (top_moment = top_edge.interior - top_edge.top_edge) > 0
+            && (top_distance === 0 ||
+                top_total + top_moment / (top_distance + 1) >
+                  top_total / top_distance))
+          top_edge   = top_edge.up,
+          top_total += top_moment,
+          ++top_distance;
+
+        var bottom_moment   = 0;
+        var bottom_total    = 0;
+        var bottom_distance = 0;
+        while (bottom_edge.down
+            && (bottom_moment = bottom_edge.interior - bottom_edge.bottom_edge) > 0
+            && (bottom_distance === 0 ||
+                bottom_total + bottom_moment / (bottom_distance + 1) >
+                  bottom_total / bottom_distance))
+          bottom_edge   = bottom_edge.down,
+          bottom_total += bottom_moment,
+          ++bottom_distance;
+
+        // Now go left and right until we hit corners and edges. Add up the
+        // confidence as we go. Note that the points are in a grid, so p1.left.x ===
+        // p2.left.x iff p1.x === p2.x.
+        var left_edge = p;
+        var nw_corner = top_edge;
+
+        while (left_edge.left &&
+               left_edge.interior + nw_corner.top_edge + left_edge_bias >
+               left_edge.left_edge + nw_corner.nw_corner)
+          left_edge = left_edge.left,
+          nw_corner = nw_corner.left;
+
+        // Do the same thing for the right side.
+        var right_edge = p;
+        var se_corner  = bottom_edge;
+
+        while (right_edge.right &&
+               right_edge.interior + se_corner.bottom_edge + right_edge_bias >
+               right_edge.right_edge + se_corner.se_corner)
+          right_edge = right_edge.right,
+          se_corner  = se_corner.right;
+
+        // Now add up the rectangle classification values to get the confidence.
+        var confidence = 0;
+        var area       = (se_corner.x - nw_corner.x) * (se_corner.y - nw_corner.y);
+
+        for (var h_iterator = nw_corner.right;
+             h_iterator.x < se_corner.x;
+             h_iterator = h_iterator.right)
+          for (var v_iterator = h_iterator.down;
+               v_iterator.y < se_corner.y;
+               v_iterator = v_iterator.down)
+            confidence += v_iterator.interior;
+
+        for (var top_iterator = nw_corner.right,
+                 bottom_iterator = se_corner.left;
+             top_iterator.x < se_corner.x;
+             top_iterator    = top_iterator.right,
+             bottom_iterator = bottom_iterator.left)
+          confidence += top_iterator.top_edge + bottom_iterator.bottom_edge;
+
+        for (var left_iterator = nw_corner.down,
+                 right_iterator = se_corner.up;
+             left_iterator.y < se_corner.y;
+             left_iterator = left_iterator.down,
+             right_iterator = right_iterator.up)
+          confidence += left_iterator.left_edge + right_iterator.right_edge;
+
+        confidence += nw_corner.nw_corner + se_corner.se_corner;
+        confidence /= area * (se_corner.y - nw_corner.y);
+
+        maximum_confidence = Math.max(confidence, maximum_confidence);
+
+        rectangles.push({x: nw_corner.x,
+                         y: nw_corner.y,
+                         w: se_corner.x - nw_corner.x,
+                         h: se_corner.y - nw_corner.y,
+                         confidence: confidence});
       }
 
-      // Last step: take each northwest corner and fold it up into a rectangle.
-      // TODO temporary implementation:
-      var result = [];
-      for (var i = 0, l = nw_corners.length, p, c; i < l; ++i) {
-        p = nw_corners[i],
-        c = p.se_corner;
-        if (c) result.push({x: p.x, y: p.y, w: c.x - p.x, h: c.y - p.y});
+      // Scale confidence values so that they span a unit interval, then remove
+      // rectangles below the minimum confidence limit.
+      var survivors = [];
+      for (var i = 0, l = rectangles.length; i < l; ++i) {
+        rectangles[i].confidence /= maximum_confidence;
+        if (rectangles[i].confidence >= minimum_confidence)
+          survivors.push(rectangles[i]);
       }
-      return result;
-    });
+
+      return survivors;
+    };
