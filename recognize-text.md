@@ -49,8 +49,8 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
       };
 
       // Process options and cache as locals.
-      var horizontal_spacing = options && options.horizontal_spacing || 8;
-      var vertical_spacing   = options && options.vertical_spacing   || 2;
+      var horizontal_spacing = options && options.horizontal_spacing || 3;
+      var vertical_spacing   = options && options.vertical_spacing   || 3;
 
       var ray_interval       = options && options.ray_interval || 1;
       var ray_steps          = options && options.ray_steps    || 6;
@@ -127,12 +127,15 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
             if (d === 0 || subtotal - average >= 0 === ray[d] - average >= 0)
               subtotal += ray[d] - average,
               ++subdistance;
-            else
-              p.rays[j].push({value:    Math.abs(subtotal),
-                              position: d,
-                              length:   subdistance}),
-              subtotal    = ray[d] - average,
+            else {
+              subtotal = Math.abs(subtotal);
+              if (subtotal > 0.025)
+                p.rays[j].push({value:    Math.abs(subtotal),
+                                position: d,
+                                length:   subdistance});
+              subtotal    = ray[d] - average;
               subdistance = 1;
+            }
 
           // Note that we don't collect the last sample if it is incomplete. It
           // needs to cross the average both ways so we can determine its distance.
@@ -170,6 +173,7 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
       // collision horizontally and a strong one diagonally, we report a start/end
       // marker more strongly than we do an interior marker.
 
+      all_magnitudes = [];
       for (var i = 0, l = points.length, p; i < l; ++i) {
         p = points[i];
         p.ray_summaries = [];
@@ -182,12 +186,13 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
           var distance  = 0;
 
           for (var k = 0, lk = (r = p.rays[j]).length, moment; k < lk; ++k)
-            moment     = r[k].value / (r[k].length * (r[k].position + 1)),
+            moment     = r[k].value / r[k].length,
             magnitude += moment,
             distance  += moment * r[k].position;
 
           p.ray_summaries[j] = {magnitude: magnitude,
                                 distance:  distance / magnitude || 0};
+          all_magnitudes.push({x: p.x, y: p.y, i: j, m: magnitude});
         }
 
         // Now that we have the summary data, calculate the relative likelihood of
@@ -381,11 +386,20 @@ Samples on the diagonal vectors only could indicate the corner of a rectangle.
 
         maximum_confidence = Math.max(confidence, maximum_confidence);
 
+        rectangles.push({x: p.x, y: p.y,
+                         w: horizontal_spacing, h: vertical_spacing,
+                         confidence: p.ray_summaries[0].magnitude +
+                                     p.ray_summaries[2].magnitude +
+                                     p.ray_summaries[4].magnitude +
+                                     p.ray_summaries[6].magnitude});
+
+        - comment << end
         rectangles.push({x: nw_corner.x,
                          y: nw_corner.y,
                          w: se_corner.x - nw_corner.x,
                          h: se_corner.y - nw_corner.y,
                          confidence: confidence});
+        - end
       }
 
       // Scale confidence values so that they span a unit interval, then remove
